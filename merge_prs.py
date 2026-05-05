@@ -17,6 +17,7 @@ import yaml
 
 RED = "\033[91m"
 GREEN = "\033[92m"
+YELLOW = "\033[93m"
 RESET = "\033[0m"
 
 
@@ -56,6 +57,13 @@ def get_file_content(repo, path, ref, token=None):
     except Exception as e:
         print(f"  Warning: failed to decode {path}: {e}")
         return None
+
+
+def get_pr_files(repo, num, token=None):
+    """Return the list of files changed in a PR (each with filename, status, ...)."""
+    files = gh("api", f"repos/{repo}/pulls/{num}/files", "--paginate",
+               token=token, json_output=True)
+    return files or []
 
 
 def get_upstream_run(repo, project_dir, branch, token=None):
@@ -200,8 +208,17 @@ def main():
         project_dir = pr["_project_dir"]
         is_wokwi_pr = pr["_is_wokwi"]
 
+        files = get_pr_files(repo, num, token=token)
+        info_yaml_path = f"{project_dir}/info.yaml"
+        info_md_path = f"{project_dir}/docs/info.md"
+        yaml_added = any(f["filename"] == info_yaml_path and f["status"] == "added" for f in files)
+        is_update = bool(files) and not yaml_added
+        info_md_changed = any(f["filename"] == info_md_path for f in files)
+
         print("=" * 70)
         print(f"[{i}/{len(selected)}] PR #{num}: {pr['title']}  ({'wokwi' if is_wokwi_pr else 'hdl'})")
+        if is_update:
+            print(f"  {YELLOW}*** UPDATE to existing project ***{RESET}")
         print(f"  Branch: {branch}")
         print(f"  {pr.get('body', '').split('\n')[0]}")
         print()
@@ -227,7 +244,7 @@ def main():
         print()
 
         # Fetch and display key fields from info.yaml
-        info_yaml_raw = get_file_content(repo, f"{project_dir}/info.yaml", branch, token=token)
+        info_yaml_raw = get_file_content(repo, info_yaml_path, branch, token=token)
         if info_yaml_raw:
             try:
                 info = yaml.safe_load(info_yaml_raw)
@@ -271,10 +288,11 @@ def main():
                 print(info_yaml_raw[:2000])
                 print()
 
-        # Fetch and display info.md (strip boilerplate comment)
-        info_md = get_file_content(repo, f"{project_dir}/docs/info.md", branch, token=token)
-        if info_md:
-            info_md = re.sub(r'<!---?\s*\n.*?-->\n*', '', info_md, flags=re.DOTALL)
+        info_md = None
+        if info_md_changed:
+            info_md = get_file_content(repo, info_md_path, branch, token=token)
+            if info_md:
+                info_md = re.sub(r'<!---?\s*\n.*?-->\n*', '', info_md, flags=re.DOTALL)
         if info_md and info_md.strip():
             print("--- docs/info.md ---")
             print(info_md[:2000])
